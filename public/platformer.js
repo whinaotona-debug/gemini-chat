@@ -11,7 +11,7 @@ ctx.imageSmoothingEnabled = true;
 
 const keys = Object.create(null);
 const tapped = Object.create(null);
-const mouse = { x: 0, y: 0, down: false, clicked: false };
+const mouse = { x: 0, y: 0, down: false, clicked: false, moved: false };
 const cam = { x: 0, y: 0 };
 
 window.addEventListener("keydown", (e) => {
@@ -37,6 +37,7 @@ canvas.addEventListener("pointermove", (e) => {
   const p = canvasPos(e);
   mouse.x = p.x;
   mouse.y = p.y;
+  mouse.moved = true;
 });
 canvas.addEventListener("pointerdown", (e) => {
   canvas.focus();
@@ -50,6 +51,150 @@ canvas.addEventListener("pointerup", () => {
   mouse.down = false;
 });
 
+let audioCtx = null;
+function unlockAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  if (!audioCtx) audioCtx = new AC();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+window.addEventListener("pointerdown", unlockAudio);
+window.addEventListener("keydown", unlockAudio);
+window.addEventListener("gamepadconnected", unlockAudio);
+
+const PAD_DZ = 0.42;
+const padHeld = {
+  left: false,
+  right: false,
+  up: false,
+  down: false,
+  a: false,
+  b: false,
+  x: false,
+  y: false,
+  back: false,
+  start: false,
+};
+const padEdge = {
+  left: false,
+  right: false,
+  up: false,
+  down: false,
+  a: false,
+  b: false,
+  x: false,
+  y: false,
+  back: false,
+  start: false,
+};
+let padConnected = false;
+
+function pollGamepad() {
+  const list = navigator.getGamepads ? navigator.getGamepads() : [];
+  let g = null;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i]) {
+      g = list[i];
+      break;
+    }
+  }
+  padConnected = !!g;
+  const next = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    a: false,
+    b: false,
+    x: false,
+    y: false,
+    back: false,
+    start: false,
+  };
+  if (g) {
+    const ax = g.axes[0] || 0;
+    const ay = g.axes[1] || 0;
+    const pressed = (i) => !!(g.buttons[i] && g.buttons[i].pressed);
+    next.left = ax < -PAD_DZ || pressed(14);
+    next.right = ax > PAD_DZ || pressed(15);
+    next.up = ay < -PAD_DZ || pressed(12);
+    next.down = ay > PAD_DZ || pressed(13);
+    next.a = pressed(1);
+    next.b = pressed(0);
+    next.x = pressed(3);
+    next.y = pressed(2);
+    next.back = pressed(8);
+    next.start = pressed(9);
+    if (next.a || next.start || next.left || next.right || next.up) unlockAudio();
+  }
+  for (const k of Object.keys(next)) {
+    padEdge[k] = next[k] && !padHeld[k];
+    padHeld[k] = next[k];
+  }
+}
+
+function tone(freq, dur, type, vol, slide) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type || "square";
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, slide), t + dur);
+  g.gain.setValueAtTime(vol || 0.07, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+const sfx = {
+  jump() {
+    tone(560, 0.11, "square", 0.06, 340);
+  },
+  kick() {
+    tone(240, 0.14, "sawtooth", 0.055, 140);
+  },
+  stomp() {
+    tone(180, 0.14, "square", 0.08, 70);
+    tone(520, 0.1, "square", 0.045, 820);
+  },
+  coin() {
+    tone(980, 0.07, "square", 0.05);
+    tone(1320, 0.12, "square", 0.045);
+  },
+  spring() {
+    tone(280, 0.18, "triangle", 0.07, 920);
+  },
+  die() {
+    tone(220, 0.38, "sawtooth", 0.07, 70);
+  },
+  spawn() {
+    tone(480, 0.16, "triangle", 0.05, 900);
+  },
+  goal() {
+    tone(523, 0.14, "square", 0.06);
+    tone(659, 0.16, "square", 0.055);
+    tone(784, 0.28, "square", 0.06);
+  },
+  key() {
+    tone(740, 0.18, "triangle", 0.06, 1180);
+  },
+  check() {
+    tone(620, 0.12, "square", 0.05, 880);
+  },
+  cannon() {
+    tone(140, 0.2, "sawtooth", 0.07, 60);
+  },
+  buy() {
+    tone(880, 0.1, "square", 0.055);
+    tone(1180, 0.16, "square", 0.05);
+  },
+  nope() {
+    tone(160, 0.12, "sawtooth", 0.05);
+  },
+};
+
 function held(k) {
   return !!keys[k];
 }
@@ -61,8 +206,8 @@ function hit(x, y, w, h) {
 }
 function axisX() {
   let x = 0;
-  if (held("ArrowLeft") || held("a") || held("A")) x -= 1;
-  if (held("ArrowRight") || held("d") || held("D")) x += 1;
+  if (held("ArrowLeft") || held("a") || held("A") || padHeld.left) x -= 1;
+  if (held("ArrowRight") || held("d") || held("D") || padHeld.right) x += 1;
   return x;
 }
 function wx(n) {
@@ -519,18 +664,72 @@ const STAGES = [
   }),
 ];
 
-let save = { unlocked: 1, best: Array(20).fill(null), coins: 0 };
+let save = {
+  unlocked: 1,
+  best: Array(20).fill(null),
+  coins: 0,
+  skin: "default",
+  owned: ["default"],
+  accs: [],
+};
 try {
   const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
-  if (raw) save = { ...save, ...raw, best: raw.best || save.best };
+  if (raw) {
+    save = { ...save, ...raw, best: raw.best || save.best };
+    if (!Array.isArray(save.owned) || !save.owned.length) save.owned = ["default"];
+    if (!save.owned.includes("default")) save.owned.unshift("default");
+    if (!Array.isArray(save.accs)) save.accs = [];
+    if (!save.skin) save.skin = "default";
+  }
 } catch {
   /* keep */
 }
 function persist() {
   localStorage.setItem(SAVE_KEY, JSON.stringify(save));
 }
+function shopOwned(id) {
+  return save.owned.indexOf(id) >= 0;
+}
+function hasAcc(id) {
+  return save.accs.indexOf(id) >= 0;
+}
+function shopItem(id) {
+  return SHOP.find((s) => s.id === id) || SHOP[0];
+}
+function skinColors() {
+  const it = shopItem(save.skin);
+  if (it.id === "rainbow") {
+    const h = (frame * 3) % 360;
+    const c = (s, l) => "hsl(" + h + "," + s + "%," + l + "%)";
+    return [c(80, 62), c(70, 46), c(60, 32)];
+  }
+  return it.colors;
+}
 
 let mode = "select";
+let selectIndex = 0;
+let pauseIndex = 0;
+let selectFrom = null;
+let shopFocus = false;
+let shopIndex = 0;
+const PAUSE_ITEMS = ["つづける", "やりなおす", "ステージせんたく"];
+const SHOP = [
+  { id: "default", name: "ふつう", kind: "skin", cost: 0, colors: ["#5a5a64", "#3c3c46", "#2c2c34"] },
+  { id: "berry", name: "いちご", kind: "skin", cost: 12, colors: ["#e85a6c", "#c43b50", "#8e2a38"] },
+  { id: "sky", name: "そら", kind: "skin", cost: 12, colors: ["#6eb6e8", "#3d8ee0", "#245a9a"] },
+  { id: "mint", name: "ミント", kind: "skin", cost: 18, colors: ["#7ee0b8", "#3cb88a", "#2a7a5c"] },
+  { id: "grape", name: "ぶどう", kind: "skin", cost: 18, colors: ["#b48ae8", "#7a52c4", "#4a3280"] },
+  { id: "lemon", name: "レモン", kind: "skin", cost: 22, colors: ["#f0d45a", "#e0b020", "#a07810"] },
+  { id: "night", name: "よる", kind: "skin", cost: 30, colors: ["#3a3e58", "#222436", "#12141c"] },
+  { id: "gold", name: "きん", kind: "skin", cost: 50, colors: ["#ffd76a", "#e8a020", "#b07010"] },
+  { id: "rainbow", name: "にじ", kind: "skin", cost: 70, colors: ["#ff6b8a", "#7ad0ff", "#ffe066"] },
+  { id: "hat", name: "ぼうし", kind: "acc", cost: 16 },
+  { id: "blush", name: "ほっぺ", kind: "acc", cost: 8 },
+  { id: "ribbon", name: "リボン", kind: "acc", cost: 14 },
+  { id: "star", name: "ほしめ", kind: "acc", cost: 20 },
+  { id: "sparkle", name: "きらきら", kind: "acc", cost: 28 },
+  { id: "tail", name: "しっぽ", kind: "acc", cost: 32 },
+];
 let stageIndex = 0;
 let stage = null;
 let time = 0;
@@ -563,6 +762,7 @@ const player = {
   blink: 0,
   dead: false,
   deadT: 0,
+  invuln: 0,
   riding: null,
   keysGot: 0,
   onLadder: false,
@@ -588,6 +788,7 @@ function startStage(i) {
   player.vy = 0;
   player.dead = false;
   player.deadT = 0;
+  player.invuln = 0;
   player.onGround = false;
   player.onWall = 0;
   player.lastWall = 0;
@@ -610,6 +811,7 @@ function startStage(i) {
   grabbed = 0;
   particles = [];
   mode = "play";
+  selectFrom = null;
 }
 
 function puff(x, y, n, color) {
@@ -626,13 +828,15 @@ function puff(x, y, n, color) {
   }
 }
 
-function kill() {
+function kill(force) {
   if (player.dead || mode !== "play") return;
+  if (!force && player.invuln > 0) return;
   player.dead = true;
   player.deadT = 0;
   player.vy = -6.5;
   player.vx = -player.facing * 2;
   puff(player.x + player.w / 2, player.y + player.h / 2, 10, "rgba(80,80,90,0.6)");
+  sfx.die();
 }
 
 function wallKick(dir, plat) {
@@ -651,27 +855,11 @@ function wallKick(dir, plat) {
   player.stretch = 1.2;
   player.squish = 0.84;
   puff(player.x + (away > 0 ? player.w : 0), player.y + player.h * 0.45, 8, "rgba(255,255,255,0.85)");
-
-  if (plat && player.y <= plat.y + 42) {
-    player.y = plat.y - player.h;
-    if (toward) {
-      player.x = away > 0 ? plat.x + 8 : plat.x + plat.w - player.w - 8;
-      player.vx = away * 3.4;
-      player.facing = away;
-    } else {
-      player.x = away > 0 ? plat.x - player.w - 2 : plat.x + plat.w + 2;
-      player.vx = -away * 4.2;
-      player.facing = -away;
-    }
-    player.vy = -3.2;
-    player.onGround = true;
-    return;
-  }
-
+  sfx.kick();
   player.vy = toward ? -11.5 : -10.6;
   player.vx = -away * (toward ? 3.5 : 7.2);
   player.facing = -away;
-  player.x -= away * 4;
+  player.x -= away * 6;
 }
 
 function doJump() {
@@ -684,13 +872,26 @@ function doJump() {
   player.stretch = 1.18;
   player.squish = 0.86;
   puff(player.x + player.w / 2, player.y + player.h, 5, "rgba(255,255,255,0.65)");
+  sfx.jump();
 }
 
+function uiConfirm() {
+  return tap("Enter") || tap(" ") || padEdge.a;
+}
+function uiBack() {
+  return tap("Escape") || padEdge.b;
+}
+function uiPick() {
+  return uiConfirm() || uiBack() || tap("Enter") || tap(" ");
+}
+function uiPauseTap() {
+  return tap("p") || tap("P") || padEdge.x;
+}
 function jumpWanted() {
-  return tap(" ") || tap("ArrowUp") || tap("w") || tap("W");
+  return tap(" ") || tap("w") || tap("W") || tap("Escape") || padEdge.a || padEdge.b;
 }
 function jumpDown() {
-  return held(" ") || held("ArrowUp") || held("w") || held("W");
+  return held(" ") || held("w") || held("W") || held("Escape") || padHeld.a || padHeld.b;
 }
 
 function isCloud(p) {
@@ -704,19 +905,22 @@ function platLive(p) {
   return true;
 }
 
-function collideX() {
+function overlapXY(x, y, w, h, p) {
+  return x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y;
+}
+
+function collideX(oldY) {
   let sideHit = 0;
   let hitPlat = null;
   for (const p of stage.plats) {
     if (!platLive(p)) continue;
     if (isCloud(p)) continue;
-    if (!overlap(player, p)) continue;
-    const fromLeft = player.vx > 0.01 || (Math.abs(player.vx) <= 0.01 && player.x + player.w / 2 < p.x + p.w / 2);
-    if (fromLeft) {
-      player.x = p.x - player.w;
+    if (!overlapXY(player.x, oldY, player.w, player.h, p)) continue;
+    if (player.x + player.w / 2 < p.x + p.w / 2) {
+      player.x = p.x - player.w - 1.5;
       sideHit = 1;
     } else {
-      player.x = p.x + p.w;
+      player.x = p.x + p.w + 1.5;
       sideHit = -1;
     }
     player.vx = 0;
@@ -725,22 +929,24 @@ function collideX() {
   return { sideHit, hitPlat };
 }
 
-function collideY() {
+function collideY(oldY, sidePlat) {
   player.onGround = false;
   player.riding = null;
+  const oldBottom = oldY + player.h;
   for (const p of stage.plats) {
     if (!platLive(p)) continue;
     if (!overlap(player, p)) continue;
+    if (sidePlat && p === sidePlat) continue;
     const cloud = isCloud(p);
-    const fromAbove = player.vy >= -0.2 && player.y + player.h - player.vy <= p.y + 10;
+    const fromAbove = player.vy >= -0.05 && oldBottom <= p.y + 0.25;
     if (cloud && !fromAbove) continue;
     if (fromAbove) {
       player.y = p.y - player.h;
       player.vy = 0;
       player.onGround = true;
       player.riding = p;
-    } else if (!cloud && player.vy < 0) {
-      player.y = p.y + Math.min(16, p.h);
+    } else if (!cloud && player.vy < 0 && oldY >= p.y + p.h - 0.5) {
+      player.y = p.y + p.h;
       player.vy = 0;
     }
   }
@@ -781,12 +987,12 @@ function updateGimmicks() {
   player.onLadder = false;
   for (const l of stage.ladders || []) {
     if (!overlap(player, { x: l.x, y: l.y, w: 28, h: l.h })) continue;
-    const climb = held("ArrowUp") || held("w") || held("W") || held("ArrowDown");
+    const climb = held("ArrowUp") || held("w") || held("W") || held("ArrowDown") || padHeld.up || padHeld.down;
     if (climb || player.onLadder) {
       player.onLadder = true;
       player.x += (l.x - 4 - player.x) * 0.25;
-      if (held("ArrowUp") || held("w") || held("W")) player.vy = -3.1;
-      else if (held("ArrowDown")) player.vy = 3.1;
+      if (held("ArrowUp") || held("w") || held("W") || padHeld.up) player.vy = -3.1;
+      else if (held("ArrowDown") || padHeld.down) player.vy = 3.1;
       else player.vy = 0;
       player.air = 0;
       player.coyote = 6;
@@ -815,6 +1021,7 @@ function updateGimmicks() {
       player.jumpLock = 10;
       player.facing = can.dir || 1;
       puff(player.x + 18, player.y + 18, 10, "rgba(255,200,80,0.8)");
+      sfx.cannon();
     }
   }
 
@@ -824,6 +1031,7 @@ function updateGimmicks() {
       k.taken = true;
       player.keysGot += 1;
       puff(k.x, k.y, 10, "rgba(255,210,70,0.9)");
+      sfx.key();
     }
   }
 
@@ -886,10 +1094,12 @@ function updatePlay() {
       player.vy = 0;
       player.dead = false;
       player.deadT = 0;
+      player.invuln = 180;
       player.facing = 1;
       player.onWall = 0;
       player.wallLock = 0;
       cam.x = Math.max(0, spawn.x - VIEW_W * 0.38);
+      sfx.spawn();
     }
     return;
   }
@@ -923,10 +1133,11 @@ function updatePlay() {
     doJump();
   }
 
+  const oldY = player.y;
   player.x += player.vx;
-  const { sideHit, hitPlat } = collideX();
+  const { sideHit, hitPlat } = collideX(oldY);
   player.y += player.vy;
-  collideY();
+  collideY(oldY, sideHit ? hitPlat : null);
 
   if (sideHit && !player.onGround && player.air > 4 && player.wallLock === 0) {
     player.onWall = sideHit;
@@ -985,7 +1196,13 @@ function updatePlay() {
     player.squish += (1.08 - player.squish) * 0.12;
   }
 
-  if (player.y > VIEW_H + 40) kill();
+  if (player.y > VIEW_H + 40) kill(true);
+
+  if (hasAcc("sparkle") && frame % 3 === 0 && (Math.abs(player.vx) > 0.4 || Math.abs(player.vy) > 0.4)) {
+    puff(player.x + player.w / 2, player.y + player.h / 2, 1, "rgba(255,230,120,0.7)");
+  }
+
+  if (player.invuln > 0) player.invuln -= 1;
 
   for (const s of stage.spikes) {
     if (overlap(player, { x: s.x + 6, y: s.y - 26, w: 24, h: 26 })) kill();
@@ -995,11 +1212,16 @@ function updatePlay() {
     e.x += e.vx;
     if (e.x < e.minX || e.x > e.maxX) e.vx *= -1;
     if (!overlap(player, e)) continue;
-    if (player.vy > 1 && player.y + player.h - player.vy <= e.y + 12) {
+    const stomp =
+      player.vy >= 0 &&
+      player.y + player.h - Math.max(player.vy, 0) <= e.y + e.h * 0.62;
+    if (stomp) {
       e.dead = true;
-      player.vy = -8.2;
+      player.vy = -9.2;
       player.cut = false;
-      puff(e.x + 16, e.y, 8, "rgba(226,59,58,0.7)");
+      player.onGround = false;
+      puff(e.x + 16, e.y, 10, "rgba(226,59,58,0.75)");
+      sfx.stomp();
     } else kill();
   }
   for (const c of stage.coins) {
@@ -1010,23 +1232,28 @@ function updatePlay() {
       save.coins += 1;
       persist();
       puff(c.x, c.y, 9, "rgba(255,210,70,0.85)");
+      sfx.coin();
     }
   }
   for (const k of stage.checks || []) {
     if (overlap(player, { x: k.x - 10, y: k.y - 88, w: 36, h: 88 })) {
-      if (!k.got) puff(k.x + 8, k.y - 50, 10, "rgba(120,230,90,0.8)");
+      if (!k.got) {
+        puff(k.x + 8, k.y - 50, 10, "rgba(120,230,90,0.8)");
+        sfx.check();
+      }
       k.got = true;
       spawn = { x: k.x - 20, y: GROUND - SIZE };
     }
   }
   for (const s of stage.springs || []) {
-    if (overlap(player, { x: s.x, y: s.y - 18, w: 44, h: 20 }) && player.vy > -2) {
+    if (overlap(player, { x: s.x, y: s.y - 18, w: 44, h: 20 }) && player.vy > 0.4) {
       player.vy = -15.4;
       player.onGround = false;
       player.cut = false;
       player.jumpLock = 6;
       player.stretch = 1.22;
       player.squish = 0.82;
+      sfx.spring();
     }
   }
   const f = stage.flag;
@@ -1037,6 +1264,7 @@ function updatePlay() {
     if (save.best[stageIndex] == null || t < save.best[stageIndex]) save.best[stageIndex] = t;
     save.unlocked = Math.max(save.unlocked, stageIndex + 2);
     persist();
+    sfx.goal();
   }
 
   if (player.blink > 0) player.blink -= 1;
@@ -1493,39 +1721,74 @@ function drawSign(s) {
   ctx.fill();
 }
 
-function drawPlayer() {
-  const w = player.w * player.squish;
-  const h = player.h * player.stretch;
-  const x = wx(player.x + (player.w - w) / 2);
-  const y = wy(player.y + player.h - h);
-  ctx.save();
-  if (player.dead) ctx.globalAlpha = 0.72;
-  const body = ctx.createLinearGradient(x, y, x, y + h);
-  body.addColorStop(0, "#5a5a64");
-  body.addColorStop(0.45, "#3c3c46");
-  body.addColorStop(1, "#2c2c34");
+function drawPlayerAt(px, py, w, h, facing, opts) {
+  opts = opts || {};
+  const cols = skinColors();
+  const body = ctx.createLinearGradient(px, py, px, py + h);
+  body.addColorStop(0, cols[0]);
+  body.addColorStop(0.45, cols[1]);
+  body.addColorStop(1, cols[2]);
   ctx.fillStyle = body;
-  rr(x, y, w, h, 8);
+  rr(px, py, w, h, 8);
   ctx.fill();
   ctx.fillStyle = "rgba(255,255,255,0.16)";
-  rr(x + 4, y + 3, w - 8, h * 0.28, 6);
+  rr(px + 4, py + 3, w - 8, h * 0.28, 6);
   ctx.fill();
-  const cx = x + w / 2;
-  const cy = y + h / 2;
-  if (player.blink > 3) {
-    ctx.strokeStyle = "#1a1a1a";
-    ctx.lineWidth = 3;
+  if (hasAcc("tail") && !opts.noAcc) {
+    ctx.fillStyle = cols[1];
     ctx.beginPath();
-    ctx.moveTo(cx - 10, cy);
-    ctx.lineTo(cx + 10, cy);
-    ctx.stroke();
-  } else {
+    ctx.moveTo(px + (facing > 0 ? 4 : w - 4), py + h * 0.55);
+    ctx.quadraticCurveTo(px + (facing > 0 ? -14 : w + 14), py + h * 0.2, px + (facing > 0 ? -6 : w + 6), py + h * 0.05);
+    ctx.quadraticCurveTo(px + (facing > 0 ? -10 : w + 10), py + h * 0.45, px + (facing > 0 ? 6 : w - 6), py + h * 0.62);
+    ctx.fill();
+  }
+  if (hasAcc("hat") && !opts.noAcc) {
+    ctx.fillStyle = "#c43b50";
+    ctx.beginPath();
+    ctx.moveTo(px + w * 0.12, py + 4);
+    ctx.lineTo(px + w * 0.5, py - 16);
+    ctx.lineTo(px + w * 0.88, py + 4);
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = "#fffef8";
     ctx.beginPath();
-    ctx.arc(cx, cy, 11.5, 0, Math.PI * 2);
+    ctx.arc(px + w * 0.5, py - 16, 4.5, 0, Math.PI * 2);
     ctx.fill();
-    const lookX = player.facing * 2.2;
-    const lookY = player.vy > 3 ? 2.2 : player.vy < -2 ? -1.6 : 0;
+  }
+  if (hasAcc("ribbon") && !opts.noAcc) {
+    ctx.fillStyle = "#ff6b8a";
+    ctx.beginPath();
+    ctx.moveTo(px + w * 0.5, py + 8);
+    ctx.lineTo(px + w * 0.22, py - 2);
+    ctx.lineTo(px + w * 0.42, py + 10);
+    ctx.lineTo(px + w * 0.5, py + 6);
+    ctx.lineTo(px + w * 0.58, py + 10);
+    ctx.lineTo(px + w * 0.78, py - 2);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const cx = px + w / 2;
+  const cy = py + h / 2;
+  ctx.fillStyle = "#fffef8";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 11.5, 0, Math.PI * 2);
+  ctx.fill();
+  const lookX = facing * 2.2;
+  const lookY = opts.lookY || 0;
+  if (hasAcc("star")) {
+    ctx.fillStyle = "#17171c";
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI * 2) / 5;
+      const r = i % 2 === 0 ? 6.2 : 3.1;
+      const x = cx + lookX + Math.cos(a) * r;
+      const y = cy + lookY + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else {
     ctx.fillStyle = "#17171c";
     ctx.beginPath();
     ctx.arc(cx + lookX, cy + lookY, 5.1, 0, Math.PI * 2);
@@ -1534,6 +1797,39 @@ function drawPlayer() {
     ctx.beginPath();
     ctx.arc(cx + lookX - 1.8, cy + lookY - 2.1, 1.7, 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (hasAcc("blush") && !opts.noAcc) {
+    ctx.fillStyle = "rgba(255,110,130,0.45)";
+    ctx.beginPath();
+    ctx.ellipse(cx - 11, cy + 8, 4.5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 11, cy + 8, 4.5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawPlayer() {
+  const w = player.w * player.squish;
+  const h = player.h * player.stretch;
+  const x = wx(player.x + (player.w - w) / 2);
+  const y = wy(player.y + player.h - h);
+  ctx.save();
+  if (player.dead) ctx.globalAlpha = 0.72;
+  else if (player.invuln > 0 && Math.floor(player.invuln / 6) % 2 === 0) ctx.globalAlpha = 0.38;
+  const lookY = player.vy > 3 ? 2.2 : player.vy < -2 ? -1.6 : 0;
+  if (player.blink > 3) {
+    drawPlayerAt(x, y, w, h, player.facing, { lookY: 0 });
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, cy);
+    ctx.lineTo(cx + 10, cy);
+    ctx.stroke();
+  } else {
+    drawPlayerAt(x, y, w, h, player.facing, { lookY });
   }
   ctx.restore();
 }
@@ -1561,7 +1857,7 @@ function drawHud() {
   drawIconBtn(76, 478, 48, "reset", hit(76, 478, 48, 48));
   ctx.fillStyle = "rgba(255,255,255,0.78)";
   ctx.font = "700 16px 'M PLUS Rounded 1c', sans-serif";
-  ctx.fillText(stageIndex + 1 + " / 20  " + stage.name, 140, 510);
+  ctx.fillText(stageIndex + 1 + " / 20  " + stage.name + (padConnected ? "   パッド" : ""), 140, 510);
   if ((stage.keys || []).length) {
     ctx.fillStyle = "rgba(255,210,70,0.9)";
     ctx.font = "800 16px Nunito, sans-serif";
@@ -1593,33 +1889,179 @@ function drawSelect() {
   stage = { theme: "day" };
   drawSky();
   ctx.fillStyle = "rgba(255,255,255,0.18)";
-  rr(80, 36, VIEW_W - 160, 86, 20);
+  rr(48, 22, VIEW_W - 96, 78, 20);
   ctx.fill();
   ctx.fillStyle = "#fff";
-  ctx.font = "800 36px 'M PLUS Rounded 1c', sans-serif";
-  ctx.fillText("ひとめ", 120, 78);
-  ctx.font = "700 16px 'M PLUS Rounded 1c', sans-serif";
-  ctx.fillText("しかけだらけの20面。すべって、蹴って、飛びこえよう", 122, 104);
-  const ox = 58;
-  const oy = 150;
-  const bw = 160;
-  const bh = 70;
-  const gap = 16;
+  ctx.font = "800 30px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("プラットフォーマー", 72, 58);
+  ctx.font = "700 14px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("スティックで選ぶ　Bで決定", 74, 82);
+  ctx.fillStyle = "#ffc44d";
+  ctx.beginPath();
+  ctx.arc(820, 50, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "800 20px Nunito, sans-serif";
+  ctx.fillText(String(save.coins), 838, 57);
+
+  const shop = { x: 48, y: 112, w: VIEW_W - 96, h: 54 };
+  if (mouse.moved && hit(shop.x, shop.y, shop.w, shop.h)) shopFocus = true;
+  const shopOn = shopFocus || hit(shop.x, shop.y, shop.w, shop.h);
+  ctx.fillStyle = shopOn ? "#ffe08a" : "rgba(255,210,80,0.92)";
+  rr(shop.x, shop.y, shop.w, shop.h, 16);
+  ctx.fill();
+  if (shopFocus) {
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 4;
+    rr(shop.x - 3, shop.y - 3, shop.w + 6, shop.h + 6, 18);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#3a2a10";
+  ctx.font = "800 24px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("ショップ　コインでスキンを買う", shop.x + 28, shop.y + 36);
+  if (mouse.clicked && hit(shop.x, shop.y, shop.w, shop.h)) {
+    shopFocus = true;
+    mode = "shop";
+    shopIndex = 0;
+  }
+
+  const ox = 48;
+  const oy = 180;
+  const bw = 164;
+  const bh = 64;
+  const gap = 14;
   for (let i = 0; i < 20; i++) {
     const x = ox + (i % 5) * (bw + gap);
     const y = oy + Math.floor(i / 5) * (bh + gap);
     const open = i < save.unlocked;
-    const hover = open && hit(x, y, bw, bh);
-    ctx.fillStyle = open ? (hover ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)") : "rgba(40,50,60,0.28)";
+    if ((mouse.clicked || mouse.moved) && hit(x, y, bw, bh)) {
+      selectIndex = i;
+      shopFocus = false;
+    }
+    const hover = open && !shopFocus && i === selectIndex;
+    ctx.fillStyle = open ? (hover ? "rgba(255,255,255,0.96)" : "rgba(255,255,255,0.78)") : "rgba(40,50,60,0.28)";
     rr(x, y, bw, bh, 14);
     ctx.fill();
+    if (!shopFocus && i === selectIndex) {
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.lineWidth = 4;
+      rr(x - 3, y - 3, bw + 6, bh + 6, 16);
+      ctx.stroke();
+    }
     ctx.fillStyle = open ? "#3a4450" : "rgba(255,255,255,0.45)";
     ctx.font = "800 16px 'M PLUS Rounded 1c', sans-serif";
-    ctx.fillText(i + 1 + "  " + STAGES[i].name, x + 12, y + 32);
+    ctx.fillText(i + 1 + "  " + STAGES[i].name, x + 12, y + 28);
     ctx.font = "700 12px Nunito, sans-serif";
-    ctx.fillText(save.best[i] != null ? save.best[i].toFixed(2) + "s" : open ? "—" : "??", x + 12, y + 54);
+    ctx.fillText(save.best[i] != null ? save.best[i].toFixed(2) + "s" : open ? "—" : "??", x + 12, y + 50);
     if (mouse.clicked && open && hit(x, y, bw, bh)) startStage(i);
   }
+}
+
+function shopCardRect(i) {
+  const cols = 5;
+  const x = 40 + (i % cols) * 184;
+  const y = 168 + Math.floor(i / cols) * 118;
+  return { x, y, w: 172, h: 106 };
+}
+
+function drawShop() {
+  stage = { theme: "day" };
+  drawSky();
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  rr(80, 28, VIEW_W - 160, 72, 20);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "800 32px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("ショップ", 120, 74);
+  ctx.font = "700 14px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("Aで買う／つける　Bでもどる", 280, 72);
+  ctx.fillStyle = "#ffc44d";
+  ctx.beginPath();
+  ctx.arc(760, 64, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "800 22px Nunito, sans-serif";
+  ctx.fillText(String(save.coins), 780, 72);
+
+  const cur = SHOP[shopIndex] || SHOP[0];
+  const oldSkin = save.skin;
+  const oldAccs = save.accs.slice();
+  if (cur.kind === "skin") save.skin = cur.id;
+  else if (!(shopOwned(cur.id) && hasAcc(cur.id)) && !hasAcc(cur.id)) save.accs = oldAccs.concat([cur.id]);
+  drawPlayerAt(540, 40, 36, 36, 1, {});
+  save.skin = oldSkin;
+  save.accs = oldAccs;
+
+  for (let i = 0; i < SHOP.length; i++) {
+    const it = SHOP[i];
+    const r = shopCardRect(i);
+    if (hit(r.x, r.y, r.w, r.h) && (mouse.moved || mouse.clicked)) shopIndex = i;
+    const on = i === shopIndex;
+    const got = shopOwned(it.id);
+    ctx.fillStyle = on ? "rgba(255,255,255,0.94)" : "rgba(255,255,255,0.78)";
+    rr(r.x, r.y, r.w, r.h, 14);
+    ctx.fill();
+    if (on) {
+      ctx.strokeStyle = "#5aa8f0";
+      ctx.lineWidth = 3;
+      rr(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 15);
+      ctx.stroke();
+    }
+    if (it.kind === "skin") {
+      ctx.fillStyle = it.colors[1];
+      rr(r.x + 14, r.y + 16, 28, 28, 6);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#5aa8f0";
+      rr(r.x + 14, r.y + 16, 28, 28, 8);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = "800 11px 'M PLUS Rounded 1c', sans-serif";
+      ctx.fillText("＋", r.x + 22, r.y + 35);
+    }
+    ctx.fillStyle = "#3a4450";
+    ctx.font = "800 16px 'M PLUS Rounded 1c', sans-serif";
+    ctx.fillText(it.name, r.x + 50, r.y + 32);
+    ctx.font = "700 13px Nunito, sans-serif";
+    if (!got) {
+      ctx.fillStyle = save.coins >= it.cost ? "#c48a10" : "#c45a5a";
+      ctx.fillText(it.cost === 0 ? "無料" : it.cost + " コイン", r.x + 50, r.y + 56);
+    } else if (it.kind === "skin") {
+      ctx.fillStyle = save.skin === it.id ? "#3d8ee0" : "#5a6a78";
+      ctx.fillText(save.skin === it.id ? "そうび中" : "持ってる", r.x + 50, r.y + 56);
+    } else {
+      ctx.fillStyle = hasAcc(it.id) ? "#3d8ee0" : "#5a6a78";
+      ctx.fillText(hasAcc(it.id) ? "つけてる" : "持ってる", r.x + 50, r.y + 56);
+    }
+    ctx.fillStyle = "rgba(60,70,80,0.55)";
+    ctx.font = "700 11px 'M PLUS Rounded 1c', sans-serif";
+    ctx.fillText(it.kind === "skin" ? "スキン" : "アクセ", r.x + 14, r.y + 88);
+    if (mouse.clicked && hit(r.x, r.y, r.w, r.h)) confirmShop();
+  }
+}
+
+function confirmShop() {
+  const it = SHOP[shopIndex];
+  if (!it) return;
+  padEdge.a = false;
+  if (!shopOwned(it.id)) {
+    if (save.coins < it.cost) {
+      sfx.nope();
+      return;
+    }
+    save.coins -= it.cost;
+    save.owned.push(it.id);
+    if (it.kind === "skin") save.skin = it.id;
+    else if (!hasAcc(it.id)) save.accs.push(it.id);
+    persist();
+    sfx.buy();
+    return;
+  }
+  if (it.kind === "skin") save.skin = it.id;
+  else if (hasAcc(it.id)) save.accs = save.accs.filter((a) => a !== it.id);
+  else save.accs.push(it.id);
+  persist();
+  sfx.buy();
 }
 
 function drawGoal() {
@@ -1636,7 +2078,7 @@ function drawGoal() {
   ctx.fillText("コイン  +" + grabbed, 360, 292);
   ctx.fillStyle = "#4a90d8";
   ctx.font = "700 16px 'M PLUS Rounded 1c', sans-serif";
-  ctx.fillText(stageIndex < 19 ? "スペースで次のステージ" : "全クリア！ ホームでもどる", 330, 330);
+  ctx.fillText(stageIndex < 19 ? "Aで次のステージ　Bでもどる" : "全クリア！ Bでホーム", 330, 330);
 }
 
 function drawWorld() {
@@ -1669,26 +2111,152 @@ function drawWorld() {
   drawHud();
 }
 
-function handleUi() {
-  if (mode === "select" && (tap("Enter") || tap(" "))) {
-    startStage(0);
+function drawPause() {
+  ctx.fillStyle = "rgba(10,16,32,0.45)";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.fillStyle = "rgba(255,255,255,0.94)";
+  rr(270, 108, 420, 318, 22);
+  ctx.fill();
+  ctx.fillStyle = "#2c3540";
+  ctx.font = "800 32px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillText("ポーズ", 318, 158);
+  ctx.font = "700 14px 'M PLUS Rounded 1c', sans-serif";
+  ctx.fillStyle = "rgba(60,70,80,0.7)";
+  ctx.fillText("スティックで選ぶ　Aで決定　Bでもどる", 318, 186);
+  for (let i = 0; i < PAUSE_ITEMS.length; i++) {
+    const x = 310;
+    const y = 210 + i * 62;
+    const over = hit(x, y, 340, 52);
+    if (over) pauseIndex = i;
+    const on = i === pauseIndex;
+    ctx.fillStyle = on ? "#5aa8f0" : "rgba(80,96,112,0.16)";
+    rr(x, y, 340, 52, 14);
+    ctx.fill();
+    ctx.fillStyle = on ? "#fff" : "#3a4450";
+    ctx.font = "800 20px 'M PLUS Rounded 1c', sans-serif";
+    ctx.fillText(PAUSE_ITEMS[i], x + 22, y + 34);
+    if (mouse.clicked && over) confirmPause();
+  }
+}
+
+function confirmPause() {
+  padEdge.a = false;
+  if (pauseIndex === 0) {
+    mode = "play";
     return;
   }
-  if (mode === "play" || mode === "goal") {
-    if ((mouse.clicked && hit(18, 478, 48, 48)) || tap("Escape")) mode = "select";
-    if ((mouse.clicked && hit(76, 478, 48, 48)) || tap("r") || tap("R")) startStage(stageIndex);
+  if (pauseIndex === 1) {
+    startStage(stageIndex);
+    return;
   }
-  if (mode === "goal" && (tap(" ") || tap("Enter"))) {
-    if (stageIndex < 19) startStage(stageIndex + 1);
-    else mode = "select";
+  selectFrom = "pause";
+  mode = "select";
+}
+
+function openPause() {
+  pauseIndex = 0;
+  mode = "pause";
+  padEdge.x = false;
+  padEdge.a = false;
+  padEdge.b = false;
+}
+
+function handleUi() {
+  if (mode === "select") {
+    if (shopFocus) {
+      if (tap("ArrowDown") || padEdge.down) shopFocus = false;
+      if (uiPick()) {
+        padEdge.a = false;
+        padEdge.b = false;
+        mode = "shop";
+        shopIndex = 0;
+        return;
+      }
+    } else {
+      if (tap("ArrowLeft") || padEdge.left) selectIndex = Math.max(0, selectIndex - 1);
+      if (tap("ArrowRight") || padEdge.right) selectIndex = Math.min(19, selectIndex + 1);
+      if (tap("ArrowUp") || padEdge.up) {
+        if (selectIndex < 5) shopFocus = true;
+        else selectIndex = Math.max(0, selectIndex - 5);
+      }
+      if (tap("ArrowDown") || padEdge.down) selectIndex = Math.min(19, selectIndex + 5);
+      if (uiPick()) {
+        if (selectIndex < save.unlocked) {
+          padEdge.a = false;
+          padEdge.b = false;
+          startStage(selectIndex);
+        }
+        return;
+      }
+    }
+  }
+  if (mode === "shop") {
+    const cols = 5;
+    if (tap("ArrowLeft") || padEdge.left) shopIndex = Math.max(0, shopIndex - 1);
+    if (tap("ArrowRight") || padEdge.right) shopIndex = Math.min(SHOP.length - 1, shopIndex + 1);
+    if (tap("ArrowUp") || padEdge.up) shopIndex = Math.max(0, shopIndex - cols);
+    if (tap("ArrowDown") || padEdge.down) shopIndex = Math.min(SHOP.length - 1, shopIndex + cols);
+    if (uiConfirm()) {
+      confirmShop();
+      return;
+    }
+    if (uiBack()) {
+      padEdge.b = false;
+      mode = "select";
+      shopFocus = true;
+      return;
+    }
+  }
+  if (mode === "pause") {
+    if (tap("ArrowUp") || padEdge.up || tap("ArrowLeft") || padEdge.left) pauseIndex = (pauseIndex + PAUSE_ITEMS.length - 1) % PAUSE_ITEMS.length;
+    if (tap("ArrowDown") || padEdge.down || tap("ArrowRight") || padEdge.right) pauseIndex = (pauseIndex + 1) % PAUSE_ITEMS.length;
+    if (uiConfirm()) {
+      confirmPause();
+      return;
+    }
+    if (uiBack() || uiPauseTap()) {
+      padEdge.b = false;
+      padEdge.x = false;
+      mode = "play";
+      return;
+    }
+  }
+  if (mode === "play") {
+    if (uiPauseTap() || (mouse.clicked && hit(18, 478, 48, 48))) {
+      openPause();
+      return;
+    }
+    if ((mouse.clicked && hit(76, 478, 48, 48)) || tap("r") || tap("R") || padEdge.y) {
+      padEdge.y = false;
+      startStage(stageIndex);
+    }
+  }
+  if (mode === "goal") {
+    if (uiConfirm()) {
+      padEdge.a = false;
+      if (stageIndex < 19) startStage(stageIndex + 1);
+      else mode = "select";
+      return;
+    }
+    if (uiBack() || (mouse.clicked && hit(18, 478, 48, 48))) {
+      padEdge.b = false;
+      selectFrom = null;
+      mode = "select";
+    }
   }
 }
 
 function tick() {
+  pollGamepad();
   handleUi();
   if (mode === "select") {
     stage = { theme: "day" };
     drawSelect();
+  } else if (mode === "shop") {
+    drawShop();
+  } else if (mode === "pause") {
+    drawWorld();
+    drawPause();
   } else {
     updatePlay();
     updateParticles();
@@ -1697,6 +2265,7 @@ function tick() {
   }
   for (const k of Object.keys(tapped)) tapped[k] = false;
   mouse.clicked = false;
+  mouse.moved = false;
   frame += 1;
 }
 
